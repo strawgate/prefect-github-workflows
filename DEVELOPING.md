@@ -16,24 +16,39 @@ Requires Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/). Docker is needed 
 
 ```
 src/prefect_github_workflows/
-├── orchestrator.py          # Main Prefect flow (5 phases)
-├── secrets.py               # Secret resolution: Prefect blocks → env vars
+├── orchestrator.py              # Main Prefect flow (5 phases)
+├── secrets.py                   # Secret resolution: Prefect blocks → env vars
+├── models.py                    # Shared dataclasses (AgentResult, etc.)
 ├── tasks/
-│   ├── clone.py             # Git clone/fetch with /tmp/repos caching
-│   ├── context.py           # Tiered repo context generation (repomix)
-│   ├── dispatch.py          # Routes to Docker or subprocess execution
-│   ├── copilot.py           # Copilot CLI wrapper + JSONL parser
-│   ├── claude.py            # Claude Code CLI wrapper
-│   ├── reporting.py         # Prefect artifact publishing
-│   ├── sandbox_env.py       # Env-var allowlist for subprocess mode
-│   └── containers.py        # Docker container runner for agents
+│   ├── clone.py                 # Git clone/fetch with /tmp/repos caching
+│   ├── context.py               # Tiered repo context generation (repomix)
+│   ├── dispatch.py              # Routes to Docker or subprocess execution
+│   ├── copilot.py               # Copilot CLI wrapper + JSONL parser
+│   ├── copilot_auth_proxy.py    # Local HTTP proxy that injects Bearer token
+│   ├── claude.py                # Claude Code CLI wrapper
+│   ├── reporting.py             # Prefect artifact publishing
+│   ├── sandbox_env.py           # Env-var allowlist for subprocess mode
+│   └── containers.py            # Docker container runner for agents
 ├── mcp/
-│   ├── safe_outputs_server.py  # Stdio MCP server (records agent actions)
-│   ├── execute_outputs.py      # Reads NDJSON → executes against GitHub API
-│   └── config.py               # Generates MCP config JSON for CLIs
+│   ├── safe_outputs_server.py   # Stdio MCP server (records agent actions)
+│   ├── execute_outputs.py       # Reads NDJSON → executes against GitHub API
+│   └── config.py                # Generates MCP config JSON for CLIs
 └── prompts/
-    ├── library.py           # 16 audit profiles with shared fragments
-    └── registry.py          # AgentProfile dataclass + register()
+    ├── library.py               # 16 audit profiles with shared fragments
+    ├── loader.py                # YAML profile loader (profiles/ directory)
+    └── registry.py              # AgentProfile dataclass + register()
+
+tests/
+├── test_clone.py                # Git clone/fetch (temp repos, no network)
+├── test_context.py              # Context generation
+├── test_copilot.py              # Copilot JSONL parser
+├── test_copilot_auth_proxy.py   # Auth proxy token injection
+├── test_dispatch.py             # Agent routing
+├── test_execute_outputs.py      # Safe-outputs execution (mocked HTTP)
+├── test_loader.py               # YAML profile loading
+├── test_registry.py             # Profile registry
+├── test_safe_outputs_server.py  # MCP server recording
+└── test_sandbox_env.py          # Env-var allowlist filtering
 ```
 
 ### Flow phases

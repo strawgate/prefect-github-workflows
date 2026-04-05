@@ -21,6 +21,8 @@ Instructions for AI coding agents working in this repository.
 | Safe-outputs MCP | `src/prefect_github_workflows/mcp/safe_outputs_server.py` |
 | Output execution | `src/prefect_github_workflows/mcp/execute_outputs.py` |
 | Prompt library | `src/prefect_github_workflows/prompts/library.py` |
+| YAML profile loader | `src/prefect_github_workflows/prompts/loader.py` |
+| Shared models | `src/prefect_github_workflows/models.py` |
 | Secrets | `src/prefect_github_workflows/secrets.py` |
 | Copilot auth proxy | `src/prefect_github_workflows/tasks/copilot_auth_proxy.py` |
 
