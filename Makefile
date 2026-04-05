@@ -1,6 +1,7 @@
-.PHONY: setup build deploy deploy-workpool worker run lint fmt typecheck test clean help
+.PHONY: setup build build-agent deploy deploy-workpool worker run lint fmt typecheck test clean help
 
-IMAGE := prefect-github-workflows:latest
+IMAGE       := prefect-github-workflows:latest
+AGENT_IMAGE := prefect-github-workflows-agent:latest
 POOL  := github-workflows-pool
 SRC   := src/prefect_github_workflows
 
@@ -14,6 +15,9 @@ setup: ## Install project and dev deps with uv
 
 build: ## Build the worker Docker image
 	docker build -t $(IMAGE) .
+
+build-agent: ## Build the agent sandbox Docker image
+	docker build -f Dockerfile.agent -t $(AGENT_IMAGE) .
 
 # ── Deployment ────────────────────────────────────────────────────────
 

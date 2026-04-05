@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import httpx
 from prefect import task
 from prefect.artifacts import create_markdown_artifact, create_table_artifact
-
-from prefect_github_workflows.secrets import get_secret
 
 
 @task(timeout_seconds=60)
@@ -16,10 +13,12 @@ def publish_results(
     commit_hash: str,
     prompt: str,
     profile_name: str = "custom",
-    post_github_issue: bool = False,
 ) -> None:
     """
-    Publish agent results as Prefect artifacts and optionally as a GitHub issue.
+    Publish agent results as Prefect artifacts.
+
+    GitHub interactions (issues, comments, reviews) are handled by the
+    safe-outputs MCP server and execute_outputs — not here.
 
     Artifacts are versioned by commit hash so you can track how findings
     evolve over time in the Prefect Cloud UI.
@@ -77,10 +76,6 @@ def publish_results(
             table=all_issues,
             description=f"Findings: {profile_name} | {repo_name}",
         )
-
-    # ── Optional: post as GitHub issue ────────────────────────────────
-    if post_github_issue and any(r.get("result") for r in results):
-        _post_github_issue(repo_url, profile_name, commit_hash, md)
 
     print(f"Published {len(results)} result(s) as artifacts for {repo_name}")
 
@@ -142,43 +137,3 @@ def _build_markdown_report(
         lines.extend(["", "---", ""])
 
     return "\n".join(lines)
-
-
-def _post_github_issue(
-    repo_url: str,
-    profile_name: str,
-    commit_hash: str,
-    body: str,
-) -> None:
-    """Post findings as a GitHub issue (requires write-scoped PAT)."""
-    token = get_secret("github-write-token")
-    if not token:
-        print("No github-write-token configured — skipping issue creation")
-        return
-
-    # Extract owner/repo from URL
-    parts = repo_url.rstrip("/").split("/")
-    owner, repo = parts[-2], parts[-1]
-
-    # Truncate body to GitHub's limit
-    if len(body) > 60_000:
-        body = body[:60_000] + "\n\n*[truncated]*"
-
-    resp = httpx.post(
-        f"https://api.github.com/repos/{owner}/{repo}/issues",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-        },
-        json={
-            "title": f"[{profile_name}] Agent audit @ {commit_hash[:8]}",
-            "body": body,
-            "labels": ["ai-audit", profile_name],
-        },
-        timeout=30,
-    )
-
-    if resp.status_code == 201:
-        print(f"Created GitHub issue: {resp.json().get('html_url')}")
-    else:
-        print(f"Failed to create issue: {resp.status_code} {resp.text[:200]}")

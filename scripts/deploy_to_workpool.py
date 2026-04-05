@@ -14,10 +14,9 @@ Then start the worker separately:
 
 from __future__ import annotations
 
+# Importing library populates PROMPT_LIBRARY via register()
+import prefect_github_workflows.prompts.library  # noqa: F401  # side-effect: registers profiles
 from prefect_github_workflows.orchestrator import github_workflow_orchestrator
-
-# Importing library populates PROMPT_LIBRARY
-from prefect_github_workflows.prompts.library import *  # noqa: F403
 from prefect_github_workflows.prompts.registry import PROMPT_LIBRARY
 
 WORK_POOL = "github-workflows-pool"
@@ -27,7 +26,8 @@ JOB_VARIABLES = {
     "env": {
         "ANTHROPIC_API_KEY": "{{ prefect.blocks.secret.anthropic-api-key }}",
         "COPILOT_GITHUB_TOKEN": "{{ prefect.blocks.secret.copilot-github-token }}",
-        "GITHUB_TOKEN": "{{ prefect.blocks.secret.github-clone-token }}",
+        "GITHUB_CLONE_TOKEN": "{{ prefect.blocks.secret.github-clone-token }}",
+        "GITHUB_WRITE_TOKEN": "{{ prefect.blocks.secret.github-write-token }}",
     },
 }
 

@@ -1,111 +1,107 @@
 # prefect-github-workflows
 
-Prefect Cloud–orchestrated AI agent sandbox for running Claude Code and GitHub Copilot CLI
-against arbitrary GitHub repositories on a schedule, with shared cached context.
+Run AI agent audits against any GitHub repository on a schedule. Claude Code and GitHub Copilot CLI analyze your codebase for security issues, bugs, stale docs, test gaps, and more — orchestrated by Prefect Cloud.
 
-## Architecture
+Results are published as Prefect artifacts and optionally posted back to GitHub as issues or PR reviews.
 
-```
-Prefect Cloud (schedules, secrets, artifacts, UI)
-        │
-        ▼
-  Docker Worker (polls for runs)
-        │
-        ▼
-  ┌─────────────────────────────────────────┐
-  │  Flow Run Container                     │
-  │                                         │
-  │  1. git clone / fetch                   │
-  │  2. generate repo context (cached by    │
-  │     commit hash — shared across runs)   │
-  │  3. fan out to agent(s):                │
-  │     ├─ Claude Code CLI (--print)        │
-  │     └─ Copilot CLI (-p --allow-all)     │
-  │  4. aggregate results → artifacts       │
-  └─────────────────────────────────────────┘
-```
+## How it works
+
+1. **Clone** the target repo (cached locally so repeated runs are fast)
+2. **Generate context** — file tree, compressed source, git log, dependency manifest
+3. **Dispatch** to one or both AI agents with a focused prompt
+4. **Collect outputs** — agents record actions (create issue, add comment, etc.) to a safe-outputs file
+5. **Execute** — the orchestrator applies those actions to GitHub after the agent finishes
+6. **Publish** — results appear as Prefect Cloud artifacts
+
+Agents never get write tokens. They run in sandboxed environments (Docker containers in production) with read-only repo access and a fake MCP server that records their intended actions.
 
 ## Prerequisites
 
-- Prefect Cloud account (https://app.prefect.cloud)
-- Docker on the worker host
-- API keys: Anthropic, GitHub PAT (read-only), Copilot-scoped PAT
-- (Optional) S3 bucket for cross-run result persistence
+- Python ≥ 3.12
+- [Prefect Cloud](https://app.prefect.cloud) account
+- Docker (for production; optional for local dev)
+- API keys: Anthropic (for Claude), GitHub PAT (for Copilot), and optionally a write-scoped PAT for posting results
 
 ## Quick start
 
 ```bash
-# 1. Install Prefect and authenticate
-pip install prefect prefect-docker
-prefect cloud login
+# Install
+git clone https://github.com/strawgate/prefect-github-workflows.git
+cd prefect-github-workflows
+make setup          # installs with uv
 
-# 2. Create secrets in Prefect Cloud
+# Configure secrets (interactive)
 python scripts/setup_secrets.py
 
-# 3. Create Docker work pool (or do it in the UI)
-prefect work-pool create --type docker github-workflows-pool
+# Or use environment variables
+export ANTHROPIC_API_KEY=sk-...
+export COPILOT_GITHUB_TOKEN=ghp_...
+export GITHUB_CLONE_TOKEN=ghp_...      # optional, for private repos
+export GITHUB_WRITE_TOKEN=ghp_...      # optional, for posting issues/reviews
 
-# 4. Build the worker image
-docker build -t prefect-github-workflows:latest .
-
-# 5. Deploy all prompt profiles
-python deploy.py
-
-# 6. Start the worker
-prefect worker start --pool github-workflows-pool --type docker
+# Deploy and run locally
+make deploy         # starts Prefect serve() with all profiles
 ```
 
 ## Running audits
 
 ```bash
-# Trigger a specific profile against a repo
+# Trigger a built-in profile
 prefect deployment run 'prefect-github-workflows/security-audit' \
   --param repo_url=https://github.com/jlowin/fastmcp
 
-# Run with a custom prompt (uses the "custom" deployment)
+# Custom prompt
 prefect deployment run 'prefect-github-workflows/custom' \
   --param repo_url=https://github.com/jlowin/fastmcp \
   --param prompt="Find all uses of eval() and assess risk"
 
-# Batch audit from the Python SDK
-python -c "
+# Batch audit from Python
 from prefect.deployments import run_deployment
 for repo in ['org/repo1', 'org/repo2']:
-    run_deployment('prefect-github-workflows/security-audit',
-                   parameters={'repo_url': f'https://github.com/{repo}'},
-                   timeout=0)
-"
+    run_deployment(
+        'prefect-github-workflows/security-audit',
+        parameters={'repo_url': f'https://github.com/{repo}'},
+        timeout=0,
+    )
 ```
 
 ## Prompt library
 
-See `src/prefect_github_workflows/prompts/library.py` for all built-in audit profiles. Each profile specifies:
+16 built-in audit profiles, each with calibrated budgets and turn limits:
 
-- `name`: deployment name and artifact key prefix
-- `prompt`: the natural-language instruction
-- `allowed_tools`: Claude Code tool restrictions (Copilot gets equivalent mapping)
-- `max_budget_usd` / `max_turns`: cost and iteration caps
-- `engine`: claude, copilot, or both
-- `tags`: for filtering in the Prefect UI
-- `cron`: optional default schedule
+| Profile | Engine | What it checks |
+|---------|--------|---------------|
+| security-audit | both | Injection, auth, crypto, dependency vulnerabilities |
+| secrets-scan | claude | Hardcoded secrets, API keys, leaked credentials |
+| bug-hunt | both | Logic errors, null handling, edge cases |
+| code-review | both | Style, patterns, naming, complexity |
+| perf-review | claude | Hot paths, I/O patterns, allocations |
+| docs-review | both | README accuracy, API docs, stale content |
+| api-docs-audit | claude | Public API surface documentation |
+| test-coverage-audit | both | Untested modules and missing scenarios |
+| test-quality | claude | Mocking practices, flakiness, assertions |
+| architecture-review | both | Coupling, cohesion, module boundaries |
+| dependency-audit | claude | Outdated, unmaintained, duplicate deps |
+| ci-review | claude | Pipeline efficiency, caching, security |
+| dockerfile-review | claude | Base images, layer optimization, security |
+| rust-audit | claude | Unsafe code, error handling, performance |
+| python-audit | claude | Typing, async patterns, packaging |
+| custom | both | Your own prompt |
 
-Add new profiles by appending to `PROMPT_LIBRARY` and re-running `python deploy.py`.
+Add new profiles in `src/prefect_github_workflows/prompts/library.py` and re-run `make deploy`.
 
-## MCP server configuration
+## Production deployment
 
-Drop a JSON file at `mcp-config.json` to connect custom MCP servers:
+```bash
+# Build images
+make build          # orchestrator image
+make build-agent    # agent sandbox image
 
-```json
-{
-  "mcpServers": {
-    "my-server": {
-      "command": "npx",
-      "args": ["-y", "@myorg/mcp-server"],
-      "env": { "API_KEY": "${MY_MCP_KEY}" }
-    }
-  }
-}
+# Deploy to Prefect Cloud work pool
+make deploy-workpool
+
+# Start the worker
+make worker
 ```
 
-The Dockerfile bakes this in at `/etc/claude/mcp-config.json`. Pass
-`--mcp-config` via the flow's `mcp_config_path` parameter to override at runtime.
+See [DEVELOPING.md](DEVELOPING.md) for full build, test, and contribution instructions.

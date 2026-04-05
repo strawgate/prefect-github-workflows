@@ -1,0 +1,51 @@
+# Agent sandbox image — runs Claude Code or Copilot CLI inside an
+# isolated container.  The orchestrator bind-mounts the cloned repo
+# (read-only), a context document, and the safe-outputs JSONL file.
+#
+# Build:  docker build -f Dockerfile.agent -t prefect-github-workflows-agent .
+
+FROM python:3.12-slim AS base
+
+# ── System deps ──────────────────────────────────────────────────────
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl git ca-certificates gnupg && \
+    # Node.js 20 (required by Claude Code CLI)
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# ── Claude Code CLI ─────────────────────────────────────────────────
+RUN npm install -g @anthropic-ai/claude-code@latest
+
+# ── GitHub CLI + Copilot extension ───────────────────────────────────
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) \
+        signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
+        https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && apt-get install -y --no-install-recommends gh && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    gh extension install github/gh-copilot || true
+
+# ── MCP SDK (only dep the safe-outputs server needs) ────────────────
+RUN pip install --no-cache-dir "mcp>=1.0"
+
+# ── Safe-outputs MCP server ─────────────────────────────────────────
+COPY src/prefect_github_workflows/mcp/safe_outputs_server.py /app/safe_outputs_server.py
+
+# ── Verify installations ────────────────────────────────────────────
+RUN claude --version && \
+    gh --version && \
+    python -c "from mcp.server import Server; print('mcp OK')"
+
+# ── Runtime ──────────────────────────────────────────────────────────
+# /workspace  — cloned repo (bind-mounted read-only by orchestrator)
+# /inputs     — context doc, MCP config (bind-mounted read-only)
+# /outputs    — safe_outputs.jsonl (bind-mounted read-write)
+
+# Run as unprivileged user (defence-in-depth)
+RUN useradd --create-home --shell /bin/bash agent
+USER agent
+WORKDIR /workspace

@@ -18,10 +18,9 @@ import sys
 
 from prefect import serve
 
-from prefect_github_workflows.orchestrator import github_workflow_orchestrator
-
 # Importing library populates PROMPT_LIBRARY via register()
-from prefect_github_workflows.prompts.library import *
+import prefect_github_workflows.prompts.library  # noqa: F401  # side-effect: registers profiles
+from prefect_github_workflows.orchestrator import github_workflow_orchestrator
 from prefect_github_workflows.prompts.registry import PROMPT_LIBRARY
 
 # ── Note ──────────────────────────────────────────────────────────────

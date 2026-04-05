@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -12,6 +11,7 @@ from pathlib import Path
 from prefect import task
 
 from prefect_github_workflows.secrets import get_secret
+from prefect_github_workflows.tasks.sandbox_env import build_sandbox_env
 
 
 @task(retries=1, retry_delay_seconds=15, timeout_seconds=600)
@@ -29,9 +29,9 @@ def run_claude_code(
     """
     Run Claude Code CLI in non-interactive (headless) mode.
 
-    Uses --print for non-interactive execution, --dangerously-skip-permissions
-    to bypass all prompts (safe inside a container), and --append-system-prompt
-    to inject the cached repo context.
+    Uses ``--print`` for non-interactive execution, ``--permission-mode
+    bypassPermissions`` to skip all permission prompts, and
+    ``--append-system-prompt-file`` to inject the cached repo context.
 
     The CLI's `--output-format json` returns a JSON object with fields:
       result, cost_usd, total_cost_usd, session_id, num_turns,
@@ -79,25 +79,26 @@ def run_claude_code(
         mcp_path = Path(mcp_config_path or "/etc/claude/mcp-config.json")
         if mcp_path.is_file():
             cmd.extend(["--mcp-config", str(mcp_path)])
+            # Allow the safe-outputs MCP server tools
+            cmd.extend(["--allowed-tools", "mcp__safe-outputs"])
 
-        # Resolve API key and set model via env var (avoids shell injection
-        # in CI — gh-aw pattern: use ANTHROPIC_MODEL instead of --model flag)
-        env = {**os.environ}
+        # Build sandboxed env — only allowlisted system vars plus
+        # Claude-specific vars.  Sensitive tokens (COPILOT_GITHUB_TOKEN,
+        # GITHUB_WRITE_TOKEN, GITHUB_CLONE_TOKEN, etc.) are excluded.
+        tool_timeout_ms = str(min(int(max_budget_usd * 60_000), 300_000))
+        extras: dict[str, str] = {
+            "ANTHROPIC_MODEL": model,
+            "DISABLE_TELEMETRY": "1",
+            "DISABLE_ERROR_REPORTING": "1",
+            "DISABLE_BUG_COMMAND": "1",
+            "MCP_TIMEOUT": "30000",
+            "BASH_DEFAULT_TIMEOUT_MS": tool_timeout_ms,
+            "BASH_MAX_TIMEOUT_MS": tool_timeout_ms,
+        }
         api_key = get_secret("anthropic-api-key")
         if api_key:
-            env["ANTHROPIC_API_KEY"] = api_key
-        env["ANTHROPIC_MODEL"] = model
-
-        # Suppress telemetry & error reporting (gh-aw best practice)
-        env["DISABLE_TELEMETRY"] = "1"
-        env["DISABLE_ERROR_REPORTING"] = "1"
-        env["DISABLE_BUG_COMMAND"] = "1"
-
-        # Set MCP/bash tool timeouts (ms) to prevent runaway tool calls
-        tool_timeout_ms = str(min(int(max_budget_usd * 60_000), 300_000))
-        env.setdefault("MCP_TIMEOUT", "30000")
-        env.setdefault("BASH_DEFAULT_TIMEOUT_MS", tool_timeout_ms)
-        env.setdefault("BASH_MAX_TIMEOUT_MS", tool_timeout_ms)
+            extras["ANTHROPIC_API_KEY"] = api_key
+        env = build_sandbox_env(extras)
 
         print(
             f"Running Claude Code: model={model}, budget=${max_budget_usd}, "

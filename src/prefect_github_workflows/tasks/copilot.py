@@ -9,14 +9,15 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 
 from prefect import task
 
 from prefect_github_workflows.secrets import get_secret
+from prefect_github_workflows.tasks.sandbox_env import build_sandbox_env
 
 
 def _check_copilot_available() -> str | None:
@@ -40,7 +41,7 @@ def _check_copilot_available() -> str | None:
     return None
 
 
-def _parse_copilot_jsonl(stdout: str) -> dict:
+def parse_copilot_jsonl(stdout: str) -> dict:
     """Parse Copilot CLI JSONL stream into a structured result dict.
 
     Event types:
@@ -82,17 +83,23 @@ def _parse_copilot_jsonl(stdout: str) -> dict:
 
 
 def _build_copilot_env(model: str) -> dict[str, str]:
-    """Build the environment dict for the Copilot CLI subprocess."""
-    env = {**os.environ}
+    """Build a sandboxed environment dict for the Copilot CLI subprocess.
+
+    Only allowlisted system vars plus Copilot-specific vars are included.
+    Sensitive tokens (ANTHROPIC_API_KEY, GITHUB_WRITE_TOKEN, etc.) are
+    explicitly excluded.
+    """
+    extras: dict[str, str] = {
+        "COPILOT_MODEL": model,
+        "COPILOT_AGENT_RUNNER_TYPE": "STANDALONE",
+        "DISABLE_TELEMETRY": "1",
+        "DISABLE_ERROR_REPORTING": "1",
+        "DISABLE_BUG_COMMAND": "1",
+    }
     gh_token = get_secret("copilot-github-token")
     if gh_token:
-        env["COPILOT_GITHUB_TOKEN"] = gh_token
-    env["COPILOT_MODEL"] = model
-    env["COPILOT_AGENT_RUNNER_TYPE"] = "STANDALONE"
-    env["DISABLE_TELEMETRY"] = "1"
-    env["DISABLE_ERROR_REPORTING"] = "1"
-    env["DISABLE_BUG_COMMAND"] = "1"
-    return env
+        extras["COPILOT_GITHUB_TOKEN"] = gh_token
+    return build_sandbox_env(extras)
 
 
 @task(retries=0, retry_delay_seconds=15, timeout_seconds=600)
@@ -152,9 +159,11 @@ def run_copilot_cli(
                 if tool_name:
                     cmd.extend(["--allow-tool", tool_name])
 
-        # MCP server config
+        # MCP server config (safe-outputs server)
         if mcp_config_path:
             cmd.extend(["--additional-mcp-config", f"@{mcp_config_path}"])
+            # Allow the safe-outputs MCP server tools
+            cmd.extend(["--allow-tool", "safe-outputs"])
 
         # Resolve GitHub token — gh-aw uses COPILOT_GITHUB_TOKEN (not GITHUB_TOKEN)
         env = _build_copilot_env(model)
@@ -184,7 +193,7 @@ def run_copilot_cli(
                 "num_turns": None,
             }
 
-        parsed = _parse_copilot_jsonl(result.stdout)
+        parsed = parse_copilot_jsonl(result.stdout)
 
         # Parse structured output if json_schema was requested
         structured_output = None
@@ -206,8 +215,6 @@ def run_copilot_cli(
             "premium_requests": parsed["premium_requests"],
         }
     finally:
-        from pathlib import Path
-
         Path(context_file).unlink(missing_ok=True)
 
 

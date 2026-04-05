@@ -124,7 +124,6 @@ ignore = [
 "deploy.py" = [
     "T20",     # print is fine in deploy script
     "ANN",     # no annotations needed in deploy script
-    "F403",    # wildcard import for prompt library registration
 ]
 
 [tool.ruff.lint.isort]
