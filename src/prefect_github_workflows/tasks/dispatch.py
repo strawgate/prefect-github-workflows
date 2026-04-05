@@ -45,7 +45,7 @@ def run_agent(
     When ``use_docker=False`` (default, for local dev), the agent runs as
     a direct subprocess with env-var sandboxing via ``sandbox_env.py``.
 
-    Note: This calls the engine functions directly (not as Prefect tasks)
+    Note: The engine functions are plain functions (not Prefect tasks)
     to avoid nested task issues.  The outer @task decorator on run_agent
     handles retry/timeout/tracking for the entire agent run.
     """
@@ -130,7 +130,7 @@ def _run_subprocess(
 
     try:
         if engine == "claude":
-            result = run_claude_code.fn(
+            result = run_claude_code(
                 repo_path=repo_path,
                 prompt=prompt,
                 context_doc=context_doc,
@@ -141,7 +141,7 @@ def _run_subprocess(
                 mcp_config_path=effective_mcp_config,
             )
         elif engine == "copilot":
-            result = run_copilot_cli.fn(
+            result = run_copilot_cli(
                 repo_path=repo_path,
                 prompt=prompt,
                 context_doc=context_doc,

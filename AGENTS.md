@@ -22,6 +22,7 @@ Instructions for AI coding agents working in this repository.
 | Output execution | `src/prefect_github_workflows/mcp/execute_outputs.py` |
 | Prompt library | `src/prefect_github_workflows/prompts/library.py` |
 | Secrets | `src/prefect_github_workflows/secrets.py` |
+| Copilot auth proxy | `src/prefect_github_workflows/tasks/copilot_auth_proxy.py` |
 
 ## Rules
 
@@ -33,9 +34,13 @@ Instructions for AI coding agents working in this repository.
 
 3. **Safe-outputs is the only way agents produce GitHub actions.** Agents call MCP tools (create_issue, add_comment, etc.) which record to NDJSON. The orchestrator executes them post-run.
 
-4. **Task functions return uniform dicts.** Both `run_claude_code` and `run_copilot_cli` return the same shape: `engine`, `model`, `result`, `structured_output`, `exit_code`/`cost_usd`, `session_id`, `num_turns`.
+4. **Copilot's built-in GitHub MCP is disabled.** We pass `--disable-builtin-mcps` so the agent cannot use its token for direct GitHub API calls. All GitHub interactions go through the safe-outputs MCP server.
 
-5. **No nested Prefect tasks.** `dispatch.py` calls engine functions via `.fn()` to avoid nesting. Only `run_agent` has the `@task` decorator.
+5. **Copilot's PAT is never in the agent environment.** The orchestrator runs a local auth proxy (`copilot_auth_proxy.py`) that injects the real Bearer token on the upstream side. The agent only sees `COPILOT_PROVIDER_BASE_URL=http://127.0.0.1:{port}` with no API key. In Docker mode, the container connects via `host.docker.internal`.
+
+6. **Task functions return uniform dicts.** Both `run_claude_code` and `run_copilot_cli` return the same shape: `engine`, `model`, `result`, `structured_output`, `exit_code`/`cost_usd`, `session_id`, `num_turns`.
+
+7. **No nested Prefect tasks.** `dispatch.py` calls engine functions via `.fn()` to avoid nesting. Only `run_agent` has the `@task` decorator.
 
 ### Code patterns
 

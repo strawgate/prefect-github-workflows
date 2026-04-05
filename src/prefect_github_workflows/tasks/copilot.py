@@ -14,9 +14,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from prefect import task
-
 from prefect_github_workflows.secrets import get_secret
+from prefect_github_workflows.tasks.copilot_auth_proxy import start_auth_proxy
 from prefect_github_workflows.tasks.sandbox_env import build_sandbox_env
 
 
@@ -82,8 +81,13 @@ def parse_copilot_jsonl(stdout: str) -> dict:
     }
 
 
-def _build_copilot_env(model: str) -> dict[str, str]:
+def _build_copilot_env(model: str, proxy_port: int) -> dict[str, str]:
     """Build a sandboxed environment dict for the Copilot CLI subprocess.
+
+    Uses the auth proxy instead of passing the real token.  The proxy
+    injects the Bearer token on the upstream side, so the agent only
+    sees ``COPILOT_PROVIDER_BASE_URL=http://127.0.0.1:{port}``
+    with no API key.
 
     Only allowlisted system vars plus Copilot-specific vars are included.
     Sensitive tokens (ANTHROPIC_API_KEY, GITHUB_WRITE_TOKEN, etc.) are
@@ -91,18 +95,16 @@ def _build_copilot_env(model: str) -> dict[str, str]:
     """
     extras: dict[str, str] = {
         "COPILOT_MODEL": model,
+        "COPILOT_PROVIDER_BASE_URL": f"http://127.0.0.1:{proxy_port}",
+        "COPILOT_PROVIDER_TYPE": "openai",
         "COPILOT_AGENT_RUNNER_TYPE": "STANDALONE",
         "DISABLE_TELEMETRY": "1",
         "DISABLE_ERROR_REPORTING": "1",
         "DISABLE_BUG_COMMAND": "1",
     }
-    gh_token = get_secret("copilot-github-token")
-    if gh_token:
-        extras["COPILOT_GITHUB_TOKEN"] = gh_token
     return build_sandbox_env(extras)
 
 
-@task(retries=0, retry_delay_seconds=15, timeout_seconds=600)
 def run_copilot_cli(
     repo_path: str,
     prompt: str,
@@ -128,6 +130,13 @@ def run_copilot_cli(
     if err:
         return _unavailable_result(err)
 
+    # Resolve token and start auth proxy so the agent never sees the PAT
+    gh_token = get_secret("copilot-github-token")
+    if not gh_token:
+        return _unavailable_result("COPILOT_GITHUB_TOKEN not set (check .env or Prefect secrets)")
+
+    proxy_port, stop_proxy = start_auth_proxy(gh_token)
+
     # Write context to a temp file to pass as system prompt context
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", prefix="ctx_", delete=False) as f:
         f.write("# Repository Context (pre-computed, do not re-scan the repo)\n\n")
@@ -149,6 +158,7 @@ def run_copilot_cli(
             "--allow-all",  # No permission prompts
             "--no-ask-user",  # Fully autonomous
             "--silent",  # No banner/stats noise
+            "--disable-builtin-mcps",  # Block direct GitHub API access
             "--model",
             model,
         ]
@@ -165,8 +175,8 @@ def run_copilot_cli(
             # Allow the safe-outputs MCP server tools
             cmd.extend(["--allow-tool", "safe-outputs"])
 
-        # Resolve GitHub token — gh-aw uses COPILOT_GITHUB_TOKEN (not GITHUB_TOKEN)
-        env = _build_copilot_env(model)
+        # Resolve GitHub token — routed through local auth proxy (no PAT in env)
+        env = _build_copilot_env(model, proxy_port)
 
         print(f"Running Copilot CLI: model={model}, tools={allowed_tools}, turns={max_turns}")
 
@@ -215,6 +225,7 @@ def run_copilot_cli(
             "premium_requests": parsed["premium_requests"],
         }
     finally:
+        stop_proxy()
         Path(context_file).unlink(missing_ok=True)
 
 

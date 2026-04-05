@@ -8,13 +8,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from prefect import task
-
 from prefect_github_workflows.secrets import get_secret
 from prefect_github_workflows.tasks.sandbox_env import build_sandbox_env
 
 
-@task(retries=1, retry_delay_seconds=15, timeout_seconds=600)
 def run_claude_code(
     repo_path: str,
     prompt: str,

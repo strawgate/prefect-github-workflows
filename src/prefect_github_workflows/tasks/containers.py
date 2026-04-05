@@ -21,6 +21,7 @@ from pathlib import Path
 
 from prefect_github_workflows.secrets import get_secret
 from prefect_github_workflows.tasks.copilot import parse_copilot_jsonl
+from prefect_github_workflows.tasks.copilot_auth_proxy import start_auth_proxy
 
 AGENT_IMAGE = "prefect-github-workflows-agent:latest"
 
@@ -200,6 +201,8 @@ def _build_copilot_cmd(
         "--allow-all",
         "--no-ask-user",
         "--silent",
+        "--disable-builtin-mcps",  # Block direct GitHub API access
+        "--secret-env-vars=COPILOT_GITHUB_TOKEN",  # Hide token from tools
         "--model",
         model,
     ]
@@ -213,19 +216,22 @@ def _build_copilot_cmd(
     return cmd
 
 
-def _build_copilot_env(model: str) -> dict[str, str]:
-    """Build env vars for Copilot container."""
-    env: dict[str, str] = {
+def _build_copilot_env(model: str, proxy_port: int) -> dict[str, str]:
+    """Build env vars for Copilot container.
+
+    Uses the auth proxy running on the host.  The container connects via
+    ``host.docker.internal`` (Docker Desktop) so the PAT never enters
+    the container environment.
+    """
+    return {
         "COPILOT_MODEL": model,
+        "COPILOT_PROVIDER_BASE_URL": f"http://host.docker.internal:{proxy_port}",
+        "COPILOT_PROVIDER_TYPE": "openai",
         "COPILOT_AGENT_RUNNER_TYPE": "STANDALONE",
         "DISABLE_TELEMETRY": "1",
         "DISABLE_ERROR_REPORTING": "1",
         "DISABLE_BUG_COMMAND": "1",
     }
-    gh_token = get_secret("copilot-github-token")
-    if gh_token:
-        env["COPILOT_GITHUB_TOKEN"] = gh_token
-    return env
 
 
 # ── Public API ─────────────────────────────────────────────────────────
@@ -286,6 +292,15 @@ def run_agent_in_container(
     ctx_file = _write_context_file(context_doc)
     mcp_cfg_file = _write_container_mcp_config()
 
+    # Start auth proxy for Copilot (token never enters the container)
+    stop_proxy = None
+    if engine == "copilot":
+        gh_token = get_secret("copilot-github-token")
+        if not gh_token:
+            msg = "COPILOT_GITHUB_TOKEN not set (check .env or Prefect secrets)"
+            raise RuntimeError(msg)
+        proxy_port, stop_proxy = start_auth_proxy(gh_token)
+
     try:
         # Bind mounts: (host_path, container_path, mode)
         mounts = [
@@ -301,7 +316,7 @@ def run_agent_in_container(
             stdin = prompt
         else:
             cmd = _build_copilot_cmd(prompt, allowed_tools, max_turns, json_schema, model)
-            env = _build_copilot_env(model)
+            env = _build_copilot_env(model, proxy_port)
             stdin = None
 
         print(f"Running {engine} in container: model={model}, image={image}, turns={max_turns}")
@@ -320,6 +335,8 @@ def run_agent_in_container(
         return _parse_copilot_result(result, model, json_schema)
 
     finally:
+        if stop_proxy:
+            stop_proxy()
         Path(ctx_file).unlink(missing_ok=True)
         Path(mcp_cfg_file).unlink(missing_ok=True)
 
