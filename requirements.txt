@@ -1,0 +1,12 @@
+# This file is kept for Docker builds that don't use uv.
+# The canonical dependency list is in pyproject.toml.
+#
+# Regenerate with:  uv pip compile pyproject.toml -o requirements.txt
+
+prefect>=3.0,<4.0
+prefect-docker>=0.6.0
+prefect-aws>=0.5.0
+claude-agent-sdk>=0.1.0
+anyio>=4.0
+httpx>=0.27.0
+pydantic>=2.0

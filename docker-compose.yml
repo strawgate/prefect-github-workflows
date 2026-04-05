@@ -1,0 +1,25 @@
+# Prefect Cloud is the control plane — this just runs the worker.
+# The worker polls Cloud for scheduled runs and spawns Docker containers.
+
+services:
+  worker:
+    image: prefect-github-workflows:latest
+    build: .
+    command: prefect worker start --pool github-workflows-pool --type docker
+    environment:
+      PREFECT_API_URL: "https://api.prefect.cloud/api/accounts/${PREFECT_ACCOUNT_ID}/workspaces/${PREFECT_WORKSPACE_ID}"
+      PREFECT_API_KEY: "${PREFECT_API_KEY}"
+    volumes:
+      # Docker socket so the worker can spawn flow-run containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persistent repo clone cache across flow runs
+      - repo-cache:/tmp/repos
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+
+volumes:
+  repo-cache:
