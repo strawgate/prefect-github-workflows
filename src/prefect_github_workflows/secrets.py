@@ -11,8 +11,8 @@ import os
 # Mapping from Prefect block name → environment variable name.
 _ENV_MAP: dict[str, str] = {
     "anthropic-api-key": "ANTHROPIC_API_KEY",
-    "github-clone-token": "GITHUB_TOKEN",
-    "copilot-github-token": "GITHUB_TOKEN",
+    "github-clone-token": "GITHUB_CLONE_TOKEN",
+    "copilot-github-token": "COPILOT_GITHUB_TOKEN",
     "github-write-token": "GITHUB_WRITE_TOKEN",
 }
 

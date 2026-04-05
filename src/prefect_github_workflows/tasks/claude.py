@@ -54,13 +54,14 @@ def run_claude_code(
             "--print",  # Non-interactive
             "--output-format",
             "json",  # Structured JSON output
-            "--dangerously-skip-permissions",  # No prompts (CONTAINER ONLY)
+            "--permission-mode",
+            "bypassPermissions",  # No prompts (headless mode)
+            "--disable-slash-commands",  # Security hardening
+            "--no-chrome",  # No Chrome integration
             "--append-system-prompt-file",
             context_file,
             "--max-turns",
             str(max_turns),
-            "--model",
-            model,
         ]
 
         # Budget cap
@@ -69,7 +70,7 @@ def run_claude_code(
 
         # Tool restrictions (permission allowlist — listed tools auto-approved)
         if allowed_tools:
-            cmd.extend(["--allowedTools", allowed_tools])
+            cmd.extend(["--allowed-tools", allowed_tools])
 
         # Structured output schema
         if json_schema:
@@ -79,11 +80,24 @@ def run_claude_code(
         if mcp_path.is_file():
             cmd.extend(["--mcp-config", str(mcp_path)])
 
-        # Resolve API key
+        # Resolve API key and set model via env var (avoids shell injection
+        # in CI — gh-aw pattern: use ANTHROPIC_MODEL instead of --model flag)
         env = {**os.environ}
         api_key = get_secret("anthropic-api-key")
         if api_key:
             env["ANTHROPIC_API_KEY"] = api_key
+        env["ANTHROPIC_MODEL"] = model
+
+        # Suppress telemetry & error reporting (gh-aw best practice)
+        env["DISABLE_TELEMETRY"] = "1"
+        env["DISABLE_ERROR_REPORTING"] = "1"
+        env["DISABLE_BUG_COMMAND"] = "1"
+
+        # Set MCP/bash tool timeouts (ms) to prevent runaway tool calls
+        tool_timeout_ms = str(min(int(max_budget_usd * 60_000), 300_000))
+        env.setdefault("MCP_TIMEOUT", "30000")
+        env.setdefault("BASH_DEFAULT_TIMEOUT_MS", tool_timeout_ms)
+        env.setdefault("BASH_MAX_TIMEOUT_MS", tool_timeout_ms)
 
         print(
             f"Running Claude Code: model={model}, budget=${max_budget_usd}, "
@@ -135,4 +149,4 @@ def run_claude_code(
         }
 
     finally:
-        Path(context_file).unlink()
+        Path(context_file).unlink(missing_ok=True)
